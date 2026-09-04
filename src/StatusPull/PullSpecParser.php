@@ -68,7 +68,7 @@ final class PullSpecParser
             $updated,
             $this->statusMap($raw['status_map'] ?? null),
             $this->alsoApprovedWhen($raw['also_approved_when'] ?? null),
-            $this->page($raw['page'] ?? null),
+            $this->pagination($raw),
         );
     }
 
@@ -100,7 +100,7 @@ final class PullSpecParser
             isset($raw['updated']) && $raw['updated'] !== '' ? (string) $raw['updated'] : null,
             is_array($raw['status_map']) ? $raw['status_map'] : [],
             is_array($raw['also_approved_when'] ?? null) ? $raw['also_approved_when'] : null,
-            is_array($raw['page'] ?? null) ? $raw['page'] : null,
+            $this->storedPagination($raw),
         );
     }
 
@@ -341,26 +341,164 @@ final class PullSpecParser
     }
 
     /**
-     * @return array{start: int, param: string, in: string}|null
+     * @param array<string, mixed> $response
      */
-    private function page(mixed $raw): ?array
+    public function readCursor(array $response, PullSpec $spec): mixed
+    {
+        $cursor = $spec->cursor();
+        if ($cursor === null) {
+            return null;
+        }
+
+        return $this->lookup($response, $cursor['from_response']);
+    }
+
+    public function formatCursor(mixed $raw, PullSpec $spec): ?string
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        $format = $spec->pollDateFormat();
+        $dt = $this->cursorInstant($raw);
+        if ($dt === null) {
+            return is_scalar($raw) ? (string) $raw : null;
+        }
+
+        return $dt->format($format);
+    }
+
+    private function cursorInstant(mixed $raw): ?\DateTimeImmutable
+    {
+        if ($raw instanceof \DateTimeInterface) {
+            return \DateTimeImmutable::createFromInterface($raw)->setTimezone(new \DateTimeZone('UTC'));
+        }
+
+        $value = is_scalar($raw) ? trim((string) $raw) : '';
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('/^\d{10,}$/', $value) === 1) {
+            return (new \DateTimeImmutable('@' . substr($value, 0, 10)))->setTimezone(new \DateTimeZone('UTC'));
+        }
+
+        try {
+            return new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
+        } catch (\Exception) {
+            return null;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array{page?: array{start: int, param: string, in: string}, cursor?: array{from_response: string, apply_to: string, format: string}}|null
+     */
+    private function pagination(array $raw): ?array
+    {
+        if (isset($raw['pagination'])) {
+            return $this->paginationBlock($raw['pagination']);
+        }
+
+        $legacy = $this->pageBlock($raw['page'] ?? null);
+        if ($legacy === null) {
+            return null;
+        }
+
+        return ['page' => $legacy];
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array{page?: array{start: int, param: string, in: string}, cursor?: array{from_response: string, apply_to: string, format: string}}|null
+     */
+    private function storedPagination(array $raw): ?array
+    {
+        if (is_array($raw['pagination'] ?? null)) {
+            return $raw['pagination'];
+        }
+        if (is_array($raw['page'] ?? null)) {
+            return ['page' => $raw['page']];
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{page?: array{start: int, param: string, in: string}, cursor?: array{from_response: string, apply_to: string, format: string}}|null
+     */
+    private function paginationBlock(mixed $raw): ?array
     {
         if ($raw === null || $raw === []) {
             return null;
         }
         if (!is_array($raw)) {
-            throw new DomainException('pull_spec.page must be an object');
+            throw new DomainException('pull_spec.pagination must be an object');
+        }
+
+        $page = $this->pageBlock($raw['page'] ?? null);
+        $cursor = $this->cursorBlock($raw['cursor'] ?? null);
+        if ($page !== null && $cursor !== null) {
+            throw new DomainException('pull_spec.pagination must be either page or cursor, not both');
+        }
+        if ($page === null && $cursor === null) {
+            return null;
+        }
+
+        return $page !== null ? ['page' => $page] : ['cursor' => $cursor];
+    }
+
+    /**
+     * @return array{start: int, param: string, in: string}|null
+     */
+    private function pageBlock(mixed $raw): ?array
+    {
+        if ($raw === null || $raw === []) {
+            return null;
+        }
+        if (!is_array($raw)) {
+            throw new DomainException('pull_spec.pagination.page must be an object');
         }
 
         $in = (string) ($raw['in'] ?? 'body');
         if ($in !== 'body' && $in !== 'query') {
-            throw new DomainException('pull_spec.page.in must be body or query');
+            throw new DomainException('pull_spec.pagination.page.in must be body or query');
         }
 
         return [
-            'start' => max(1, (int) ($raw['start'] ?? 1)),
+            'start' => max(0, (int) ($raw['start'] ?? 1)),
             'param' => (string) ($raw['param'] ?? 'page'),
             'in' => $in,
+        ];
+    }
+
+    /**
+     * @return array{from_response: string, apply_to: string, format: string}|null
+     */
+    private function cursorBlock(mixed $raw): ?array
+    {
+        if ($raw === null || $raw === []) {
+            return null;
+        }
+        if (!is_array($raw)) {
+            throw new DomainException('pull_spec.pagination.cursor must be an object');
+        }
+
+        $fromResponse = $this->dottedPath($raw['from_response'] ?? null, 'pagination.cursor.from_response');
+        $applyTo = trim((string) ($raw['apply_to'] ?? 'from'));
+        if (!in_array($applyTo, ['from', 'to', 'page'], true)) {
+            throw new DomainException('pull_spec.pagination.cursor.apply_to must be from, to or page');
+        }
+
+        $format = trim((string) ($raw['format'] ?? PullSpec::DEFAULT_DATE_FORMAT));
+        if ($format === '') {
+            throw new DomainException('pull_spec.pagination.cursor.format must not be empty');
+        }
+
+        return [
+            'from_response' => $fromResponse,
+            'apply_to' => $applyTo,
+            'format' => $format,
         ];
     }
 }

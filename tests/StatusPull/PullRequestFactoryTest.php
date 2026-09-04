@@ -57,6 +57,7 @@ final class PullRequestFactoryTest extends TestCase
             'page' => ['start' => 1, 'param' => 'page', 'in' => 'body'],
         ]);
         self::assertNotNull($spec);
+        self::assertNotNull($spec->page());
 
         $request = (new PullRequestFactory())->build(
             'https://crm.example:8443/ignored',
@@ -73,5 +74,37 @@ final class PullRequestFactoryTest extends TestCase
             'to' => '2026-09-03',
             'page' => 2,
         ], $request->body);
+    }
+
+    public function testPaginationPageBlockCastsPageToInt(): void
+    {
+        $parser = new PullSpecParser();
+        $spec = $parser->hydrateAndValidate([
+            'method' => 'POST',
+            'path' => '/api/pull/customers',
+            'body' => [
+                'from' => '{{poll.from}}',
+                'to' => '{{poll.to}}',
+                'page' => '{{poll.page}}',
+            ],
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'status_map' => ['No Interest' => ['status' => 'rejected', 'reason' => 'not_interested']],
+            'pagination' => [
+                'page' => ['start' => 0, 'param' => 'page', 'in' => 'body'],
+            ],
+        ]);
+        self::assertNotNull($spec);
+
+        $request = (new PullRequestFactory())->build(
+            'https://crm.example',
+            $spec,
+            [],
+            ['from' => '2026-06-25 14:57:55', 'to' => '2026-09-03 23:59:59', 'page' => '0'],
+        );
+
+        self::assertSame(0, $request->body['page'] ?? null);
+        self::assertSame('2026-06-25 14:57:55', $request->body['from'] ?? null);
     }
 }

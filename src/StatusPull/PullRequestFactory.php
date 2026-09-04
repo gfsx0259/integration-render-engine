@@ -32,14 +32,14 @@ final readonly class PullRequestFactory
             $rendered = $this->template->render($body, [], $static);
             $body = is_array($rendered) ? $rendered : null;
         }
-        if (is_array($body) && $spec->page !== null && $spec->pageInBody()) {
+        if (is_array($body) && $spec->page() !== null && $spec->pageInBody()) {
             $param = $spec->pageParam();
             if (isset($body[$param]) && is_numeric($body[$param])) {
                 $body[$param] = (int) $body[$param];
             }
         }
 
-        if ($spec->page !== null && !$spec->pageInBody()) {
+        if ($spec->page() !== null && !$spec->pageInBody()) {
             $path = $this->appendQuery($path, [$spec->pageParam() => $poll['page']]);
         }
 

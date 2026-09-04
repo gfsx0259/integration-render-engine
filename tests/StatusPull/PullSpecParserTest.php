@@ -140,6 +140,93 @@ final class PullSpecParserTest extends TestCase
         self::assertSame('link_id', $hydrated->id);
     }
 
+    public function testPaginationCursorIsStoredUnderOneKey(): void
+    {
+        $spec = $this->spec([
+            'method' => 'POST',
+            'path' => '/api/pull/customers',
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'status_map' => ['No Interest' => ['status' => 'rejected', 'reason' => 'not_interested']],
+            'pagination' => [
+                'cursor' => [
+                    'from_response' => 'nextToken',
+                    'apply_to' => 'from',
+                    'format' => 'Y-m-d H:i:s',
+                ],
+            ],
+        ]);
+
+        self::assertNull($spec->page());
+        self::assertSame('nextToken', $spec->cursor()['from_response'] ?? null);
+        self::assertSame('from', $spec->cursor()['apply_to'] ?? null);
+        self::assertSame('Y-m-d H:i:s', $spec->pollDateFormat());
+        self::assertArrayHasKey('pagination', $spec->toArray());
+        self::assertArrayNotHasKey('page', $spec->toArray());
+
+        $hydrated = $this->parser->hydrate($spec->toArray());
+        self::assertSame('nextToken', $hydrated->cursor()['from_response'] ?? null);
+    }
+
+    public function testLegacyPageKeyBecomesPaginationPage(): void
+    {
+        $spec = $this->spec([
+            'method' => 'POST',
+            'path' => '/api/pull/customers',
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'status_map' => ['No Interest' => ['status' => 'rejected', 'reason' => 'not_interested']],
+            'page' => ['start' => 1, 'param' => 'page', 'in' => 'body'],
+        ]);
+
+        self::assertSame(1, $spec->pageStart());
+        self::assertSame(['page' => ['start' => 1, 'param' => 'page', 'in' => 'body']], $spec->pagination);
+    }
+
+    public function testPageAndCursorTogetherAreRejected(): void
+    {
+        $this->expectException(\DomainException::class);
+
+        $this->parser->hydrateAndValidate([
+            'method' => 'POST',
+            'path' => '/api/pull/customers',
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'status_map' => ['No Interest' => ['status' => 'rejected', 'reason' => 'not_interested']],
+            'pagination' => [
+                'page' => ['start' => 1],
+                'cursor' => ['from_response' => 'nextToken', 'apply_to' => 'from'],
+            ],
+        ]);
+    }
+
+    public function testFormatCursorAcceptsTrackboxNumericToken(): void
+    {
+        $spec = $this->spec([
+            'method' => 'POST',
+            'path' => '/api/pull/customers',
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'status_map' => ['No Interest' => ['status' => 'rejected', 'reason' => 'not_interested']],
+            'pagination' => [
+                'cursor' => [
+                    'from_response' => 'nextToken',
+                    'apply_to' => 'from',
+                    'format' => 'Y-m-d H:i:s',
+                ],
+            ],
+        ]);
+
+        self::assertSame('2026-07-15 13:57:27', $this->parser->formatCursor('17841238478062376', $spec));
+        self::assertSame('2026-08-01 12:00:00', $this->parser->formatCursor('2026-08-01 12:00:00', $spec));
+        self::assertNull($this->parser->formatCursor('', $spec));
+        self::assertSame('17841238478062376', $this->parser->readCursor(['nextToken' => '17841238478062376'], $spec));
+    }
+
     public function testAuthErrorInJsonBodyIsNotAnEmptyList(): void
     {
         $spec = $this->spec([
