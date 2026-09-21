@@ -95,6 +95,24 @@ final class ResponseSpecParserTest extends TestCase
         self::assertTrue($this->parser->verdict($spec, 200, '{"success": "0"}')->rejected());
     }
 
+    public function testMissingOrNonScalarFieldNeverMatchesBooleanRule(): void
+    {
+        $spec = $this->parser->hydrateAndValidate(['ok' => ['path' => 'status', 'eq' => false]]);
+
+        self::assertTrue($this->parser->verdict($spec, 200, '{"other": 1}')->rejected());
+        self::assertTrue($this->parser->verdict($spec, 200, '{"status": ["x"]}')->rejected());
+        self::assertTrue($this->parser->verdict($spec, 200, '{"status": false}')->accepted());
+        self::assertTrue($this->parser->verdict($spec, 200, '{"status": 0}')->accepted());
+    }
+
+    public function testNumericValuesMatchBooleanRuleOnlyAsZeroOrOne(): void
+    {
+        $spec = $this->parser->hydrateAndValidate(['ok' => ['path' => 'ok', 'eq' => true]]);
+
+        self::assertTrue($this->parser->verdict($spec, 200, '{"ok": 1}')->accepted());
+        self::assertTrue($this->parser->verdict($spec, 200, '{"ok": 2}')->rejected());
+    }
+
     public function testNonJsonBodyWithSpecIsRejected(): void
     {
         $spec = $this->parser->hydrateAndValidate(['ok' => ['path' => 'ok', 'eq' => 1]]);

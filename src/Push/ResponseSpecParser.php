@@ -84,17 +84,38 @@ final class ResponseSpecParser
             return null;
         }
 
-        return mb_substr($text, 0, self::ERROR_MAX_LENGTH);
+        return self::truncate($text, self::ERROR_MAX_LENGTH);
+    }
+
+    private static function truncate(string $text, int $length): string
+    {
+        if (function_exists('mb_substr')) {
+            return mb_substr($text, 0, $length);
+        }
+
+        return substr($text, 0, $length);
     }
 
     private function equals(mixed $actual, mixed $expected): bool
     {
+        if ($actual === null || is_array($actual)) {
+            return $expected === null && $actual === null;
+        }
+
         if (is_bool($expected)) {
-            if (is_string($actual)) {
-                return in_array(strtolower($actual), $expected ? ['1', 'true', 'ok', 'success'] : ['0', 'false', 'fail', 'error'], true);
+            if (is_bool($actual)) {
+                return $actual === $expected;
             }
 
-            return (bool) $actual === $expected;
+            if (is_int($actual) || is_float($actual)) {
+                return ((float) $actual === 1.0) === $expected && in_array((float) $actual, [0.0, 1.0], true);
+            }
+
+            if (is_string($actual)) {
+                return in_array(strtolower(trim($actual)), $expected ? ['1', 'true', 'ok', 'success', 'yes'] : ['0', 'false', 'fail', 'error', 'no'], true);
+            }
+
+            return false;
         }
 
         if (is_int($expected) || is_float($expected)) {
@@ -102,7 +123,7 @@ final class ResponseSpecParser
         }
 
         if ($expected === null) {
-            return $actual === null;
+            return false;
         }
 
         return strcasecmp((string) $this->scalar($actual), (string) $expected) === 0;
