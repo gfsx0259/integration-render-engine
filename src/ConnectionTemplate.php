@@ -65,12 +65,52 @@ final readonly class ConnectionTemplate
             if (!is_string($key) || $key === '') {
                 continue;
             }
-            if (is_scalar($value)) {
+            if (is_scalar($value) && (string) $value !== '') {
                 $headers[$key] = (string) $value;
             }
         }
 
         return $headers;
+    }
+
+    public function dropEmpty(mixed $rendered): mixed
+    {
+        if (!is_array($rendered)) {
+            return $rendered;
+        }
+
+        $kept = array_filter(
+            array_map(fn (mixed $value): mixed => $this->dropEmpty($value), $rendered),
+            static fn (mixed $value): bool => $value !== '',
+        );
+
+        return array_is_list($rendered) ? array_values($kept) : $kept;
+    }
+
+    /**
+     * @param array<string, mixed> $static
+     */
+    public function dependsOnLead(mixed $template, array $static): bool
+    {
+        return $this->keys($template, TemplateSource::Lead) !== []
+            || array_intersect($this->keys($template, TemplateSource::Static), $this->leadDependentKeys($static)) !== [];
+    }
+
+    /**
+     * @param array<string, mixed> $static
+     * @return list<string>
+     */
+    public function leadDependentKeys(array $static): array
+    {
+        $keys = [];
+
+        foreach ($static as $key => $value) {
+            if (is_string($value) && (Macros::contains($value) || $this->keys($value, TemplateSource::Lead) !== [])) {
+                $keys[] = (string) $key;
+            }
+        }
+
+        return $keys;
     }
 
     /**
