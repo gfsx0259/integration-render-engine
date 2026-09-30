@@ -18,33 +18,29 @@ final readonly class ConnectionTemplate
     private const string PLACEHOLDER = '/\{\{\s*(lead|static)\.([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*)\s*\}\}/';
 
     /**
+     * @param array<array-key, mixed> $template
      * @param array<string, mixed> $lead
      * @param array<string, mixed> $static
+     * @return array<array-key, mixed>
      */
-    public function render(mixed $template, array $lead, array $static): mixed
+    public function render(array $template, array $lead, array $static): array
     {
-        if (is_array($template)) {
-            return array_map(function ($value) use ($static, $lead) {
-                return $this->render($value, $lead, $static);
-            }, $template);
-        }
+        return array_map(fn (mixed $value): mixed => match (true) {
+            is_array($value) => $this->render($value, $lead, $static),
+            is_string($value) => $this->substitute($value, $lead, $static),
+            default => $value,
+        }, $template);
+    }
 
-        if (!is_string($template)) {
-            return $template;
-        }
+    /**
+     * @param array<string, string> $static
+     */
+    public function renderUrl(string $template, array $static): string
+    {
+        [$path, $query] = array_pad(explode('?', $template, 2), 2, null);
+        $url = $this->substitute($path, [], array_map(static fn (string $value): string => rtrim($value, '/'), $static));
 
-        $replaced = preg_replace_callback(
-            self::PLACEHOLDER,
-            function (array $match) use ($lead, $static): string {
-                $source = TemplateSource::from($match[1]);
-                $bag = $source === TemplateSource::Lead ? $lead : $static;
-
-                return $this->lookup($bag, $match[2]);
-            },
-            $template,
-        );
-
-        return $replaced ?? $template;
+        return $query === null ? $url : $url . '?' . $this->substitute($query, [], array_map('rawurlencode', $static));
     }
 
     /**
@@ -55,13 +51,8 @@ final readonly class ConnectionTemplate
      */
     public function renderHeaders(array $template, array $lead, array $static): array
     {
-        $rendered = $this->render($template, $lead, $static);
-        if (!is_array($rendered)) {
-            return [];
-        }
-
         $headers = [];
-        foreach ($rendered as $key => $value) {
+        foreach ($this->render($template, $lead, $static) as $key => $value) {
             if (!is_string($key) || $key === '') {
                 continue;
             }
@@ -73,14 +64,14 @@ final readonly class ConnectionTemplate
         return $headers;
     }
 
-    public function dropEmpty(mixed $rendered): mixed
+    /**
+     * @param array<array-key, mixed> $rendered
+     * @return array<array-key, mixed>
+     */
+    public function dropEmpty(array $rendered): array
     {
-        if (!is_array($rendered)) {
-            return $rendered;
-        }
-
         $kept = array_filter(
-            array_map(fn (mixed $value): mixed => $this->dropEmpty($value), $rendered),
+            array_map(fn (mixed $value): mixed => is_array($value) ? $this->dropEmpty($value) : $value, $rendered),
             static fn (mixed $value): bool => $value !== '',
         );
 
@@ -152,6 +143,22 @@ final readonly class ConnectionTemplate
                 $keys[$match[2]] = true;
             }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $lead
+     * @param array<string, mixed> $static
+     */
+    private function substitute(string $template, array $lead, array $static): string
+    {
+        return preg_replace_callback(
+            self::PLACEHOLDER,
+            fn (array $match): string => $this->lookup(
+                TemplateSource::from($match[1]) === TemplateSource::Lead ? $lead : $static,
+                $match[2],
+            ),
+            $template,
+        ) ?? $template;
     }
 
     /**

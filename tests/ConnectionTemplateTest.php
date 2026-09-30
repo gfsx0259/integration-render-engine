@@ -52,8 +52,22 @@ final class ConnectionTemplateTest extends TestCase
 
     public function testMissingPlaceholderBecomesEmptyString(): void
     {
-        self::assertSame('', $this->engine->render('{{lead.missing}}', [], []));
-        self::assertSame('Bearer ', $this->engine->render('Bearer {{static.api_token}}', [], []));
+        self::assertSame(
+            ['a' => '', 'b' => 'Bearer '],
+            $this->engine->render(['a' => '{{lead.missing}}', 'b' => 'Bearer {{static.api_token}}'], [], []),
+        );
+    }
+
+    public function testRenderUrlTrimsBaseAndEncodesQueryValues(): void
+    {
+        self::assertSame(
+            'https://tracking.example.com/api/v3/integration?api_token=a%2Bb&link=7',
+            $this->engine->renderUrl(
+                '{{static.API_URL}}/api/v3/integration?api_token={{static.API_TOKEN}}&link={{static.LINK_ID}}',
+                ['API_URL' => 'https://tracking.example.com/', 'API_TOKEN' => 'a+b', 'LINK_ID' => '7'],
+            ),
+        );
+        self::assertSame('/api/pull/customers', $this->engine->renderUrl('/api/pull/customers', []));
     }
 
     public function testRenderHeadersFlattensToStringMap(): void
@@ -91,6 +105,6 @@ final class ConnectionTemplateTest extends TestCase
 
     public function testAllowsWhitespaceInsidePlaceholders(): void
     {
-        self::assertSame('ok', $this->engine->render('{{ lead.email }}', ['email' => 'ok'], []));
+        self::assertSame(['ok'], $this->engine->render(['{{ lead.email }}'], ['email' => 'ok'], []));
     }
 }

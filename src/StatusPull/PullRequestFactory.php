@@ -18,7 +18,7 @@ final readonly class PullRequestFactory
      */
     public function build(string $connectionUrl, PullSpec $spec, array $static, array $poll): PullRequest
     {
-        $path = (string) $this->template->render($this->applyPoll($spec->path, $poll), [], $static);
+        $path = $this->template->renderUrl((string) $this->applyPoll($spec->path, $poll), $static);
 
         $headerTemplate = $this->applyPoll($spec->headers, $poll);
         $headers = $this->template->renderHeaders(
@@ -29,8 +29,7 @@ final readonly class PullRequestFactory
 
         $body = $spec->body === null ? null : $this->applyPoll($spec->body, $poll);
         if (is_array($body)) {
-            $rendered = $this->template->render($body, [], $static);
-            $body = is_array($rendered) ? $rendered : null;
+            $body = $this->template->render($body, [], $static);
         }
         if (is_array($body) && $spec->page() !== null && $spec->pageInBody()) {
             $param = $spec->pageParam();
