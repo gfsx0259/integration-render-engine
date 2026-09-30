@@ -38,6 +38,28 @@ final class PullRequestFactoryTest extends TestCase
         self::assertNull($request->body);
     }
 
+    public function testAbsolutePathFromSettingsWinsOverConnectionHost(): void
+    {
+        $spec = (new PullSpecParser())->hydrateAndValidate([
+            'method' => 'GET',
+            'path' => '{{static.API_URL}}/api/v3/get-leads?api_token={{static.API_TOKEN}}',
+            'items' => 'data',
+            'id' => 'id',
+            'status' => 'status',
+            'pagination' => ['page' => ['start' => 1, 'param' => 'page', 'in' => 'query']],
+        ]);
+        self::assertNotNull($spec);
+
+        $request = (new PullRequestFactory())->build(
+            'https://push.example.com/api/v3/integration?api_token=ignored',
+            $spec,
+            ['API_URL' => 'https://pull.example.com/', 'API_TOKEN' => 'secret'],
+            ['from' => '2026-09-01', 'to' => '2026-09-03', 'page' => '2'],
+        );
+
+        self::assertSame('https://pull.example.com/api/v3/get-leads?api_token=secret&page=2', $request->url);
+    }
+
     public function testPostBodyCastsPageToInt(): void
     {
         $parser = new PullSpecParser();

@@ -9,6 +9,10 @@ use RuntimeException;
 
 final class PullSpecParser
 {
+    public function __construct(
+        private readonly SaleStatusMapper $saleStatuses = new SaleStatusMapper(),
+    ) {}
+
     /**
      * Save path: validate user JSON and build a spec. Empty / null disables pull.
      *
@@ -26,8 +30,8 @@ final class PullSpecParser
         }
 
         $path = trim((string) ($raw['path'] ?? ''));
-        if ($path === '' || !str_starts_with($path, '/')) {
-            throw new DomainException('pull_spec.path must start with /');
+        if ($path === '' || (!str_starts_with($path, '/') && !str_starts_with($path, '{{static.'))) {
+            throw new DomainException('pull_spec.path must start with / or a {{static.*}} base URL');
         }
 
         $items = $this->dottedPath($raw['items'] ?? null, 'items');
@@ -98,7 +102,7 @@ final class PullSpecParser
             (string) $raw['id'],
             (string) $raw['status'],
             isset($raw['updated']) && $raw['updated'] !== '' ? (string) $raw['updated'] : null,
-            is_array($raw['status_map']) ? $raw['status_map'] : [],
+            is_array($raw['status_map'] ?? null) ? $raw['status_map'] : [],
             is_array($raw['also_approved_when'] ?? null) ? $raw['also_approved_when'] : null,
             $this->storedPagination($raw),
         );
@@ -161,7 +165,9 @@ final class PullSpecParser
             );
         }
 
-        if (!array_key_exists($rawStatus, $spec->statusMap)) {
+        $overridden = array_key_exists($rawStatus, $spec->statusMap);
+
+        if (!$overridden && $this->saleStatuses->isUnknown($rawStatus)) {
             return new PullItem(
                 $publicId,
                 $rawStatus,
@@ -173,7 +179,8 @@ final class PullSpecParser
             );
         }
 
-        $mapped = $spec->statusMap[$rawStatus];
+        $mapped = $overridden ? $spec->statusMap[$rawStatus] : $this->saleStatuses->map($rawStatus);
+
         if ($mapped === null) {
             return new PullItem(
                 $publicId,
@@ -284,8 +291,12 @@ final class PullSpecParser
      */
     private function statusMap(mixed $raw): array
     {
-        if (!is_array($raw) || $raw === []) {
-            throw new DomainException('pull_spec.status_map is required');
+        if ($raw === null || $raw === []) {
+            return [];
+        }
+
+        if (!is_array($raw)) {
+            throw new DomainException('pull_spec.status_map must be an object');
         }
 
         $map = [];
@@ -313,10 +324,6 @@ final class PullSpecParser
                 $entry['reason'] = $value['reason'];
             }
             $map[$label] = $entry;
-        }
-
-        if ($map === []) {
-            throw new DomainException('pull_spec.status_map is required');
         }
 
         return $map;
