@@ -27,14 +27,14 @@ final readonly class PushRenderer
         BodyEncoding $encoding,
         array $leadVars,
     ): PushMessage {
-        $static = StaticValues::normalizeMap((array) $this->template->render(
+        $static = StaticValues::normalizeMap($this->template->render(
             Macros::expandAll($fieldValues, $leadVars),
             $leadVars,
             [],
         ));
 
         return new PushMessage(
-            (array) $this->template->dropEmpty($this->template->render($bodyTemplate, $leadVars, $static)),
+            $this->template->dropEmpty($this->template->render($bodyTemplate, $leadVars, $static)),
             $this->template->renderHeaders(
                 array_filter(
                     $headersTemplate,
