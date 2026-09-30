@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Enthusiast\IntegrationRenderEngine\Tests\Push;
 
+use Enthusiast\IntegrationRenderEngine\Lead;
 use Enthusiast\IntegrationRenderEngine\LeadVars;
 use Enthusiast\IntegrationRenderEngine\Push\BodyEncoding;
 use Enthusiast\IntegrationRenderEngine\Push\PushMessage;
@@ -81,11 +82,9 @@ final class PushRendererTest extends TestCase
      */
     private function lead(): array
     {
-        return LeadVars::build([
-            'email' => 'test@example.com',
-            'phone' => '+81 90-1234-5678',
-            'country_code' => 'jp',
-            'aff_sub4' => 'ZvPlatform',
-        ], ['lead_id' => 'pub-1']);
+        return (new LeadVars())->build(
+            new Lead('Taro', 'Yamada', 'test@example.com', '+81 90-1234-5678', '1.2.3.4', 'jp', subs: ['aff_sub4' => 'ZvPlatform']),
+            'pub-1',
+        );
     }
 }
