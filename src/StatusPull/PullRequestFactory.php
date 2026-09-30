@@ -73,6 +73,13 @@ final readonly class PullRequestFactory
 
     private function joinUrl(string $base, string $path): string
     {
+        if (preg_match('#^https?://#i', $path) === 1) {
+            [$location, $query] = array_pad(explode('?', $path, 2), 2, null);
+            $location = (string) preg_replace('#(?<!:)/{2,}#', '/', $location);
+
+            return $query === null ? $location : $location . '?' . $query;
+        }
+
         $parts = parse_url($base);
         $scheme = $parts['scheme'] ?? 'https';
         $host = $parts['host'] ?? '';
