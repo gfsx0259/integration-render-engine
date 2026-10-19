@@ -24,26 +24,60 @@ final class PullSpecParser
             return null;
         }
 
+        return $this->validated($raw, false);
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     */
+    private function validated(array $raw, bool $depositList): PullSpec
+    {
+        $field = $depositList ? 'deposits.' : '';
+
         $method = strtoupper(trim((string) ($raw['method'] ?? '')));
         if ($method !== PullSpec::METHOD_GET && $method !== PullSpec::METHOD_POST) {
-            throw new DomainException('pull_spec.method must be GET or POST');
+            throw new DomainException("pull_spec.{$field}method must be GET or POST");
         }
 
         $path = trim((string) ($raw['path'] ?? ''));
         if ($path === '' || (!str_starts_with($path, '/') && !str_starts_with($path, '{{static.'))) {
-            throw new DomainException('pull_spec.path must start with / or a {{static.*}} base URL');
+            throw new DomainException("pull_spec.{$field}path must start with / or a {{static.*}} base URL");
         }
 
-        $items = $this->dottedPath($raw['items'] ?? null, 'items');
-        $id = $this->dottedPath($raw['id'] ?? null, 'id');
-        $status = $this->dottedPath($raw['status'] ?? null, 'status');
-        $updated = isset($raw['updated']) && $raw['updated'] !== '' && $raw['updated'] !== null
+        $items = ($raw['items'] ?? null) === '' ? '' : $this->dottedPath($raw['items'] ?? null, $field . 'items');
+        $id = $this->dottedPath($raw['id'] ?? null, $field . 'id');
+        $status = $depositList && ($raw['status'] ?? '') === ''
+            ? ''
+            : $this->dottedPath($raw['status'] ?? null, $field . 'status');
+        $updated = !$depositList && isset($raw['updated']) && $raw['updated'] !== '' && $raw['updated'] !== null
             ? $this->dottedPath($raw['updated'], 'updated')
             : null;
 
-        $lookback = (int) ($raw['lookback_days'] ?? 7);
+        $defaultLookback = $depositList ? PullSpec::DEFAULT_DEPOSIT_LOOKBACK_DAYS : 7;
+        $lookback = (int) ($raw['lookback_days'] ?? $defaultLookback);
         if ($lookback < 1 || $lookback > 90) {
-            throw new DomainException('pull_spec.lookback_days must be 1–90');
+            throw new DomainException("pull_spec.{$field}lookback_days must be 1–90");
+        }
+
+        $dateFormat = null;
+        if (isset($raw['date_format']) && $raw['date_format'] !== '') {
+            $dateFormat = trim((string) $raw['date_format']);
+            if ($dateFormat === '' || strlen($dateFormat) > 64) {
+                throw new DomainException("pull_spec.{$field}date_format must be unix, unix_ms or a PHP date format");
+            }
+        }
+
+        $bodyEncoding = (string) ($raw['body_encoding'] ?? PullSpec::ENCODING_JSON);
+        if (!in_array($bodyEncoding, PullSpec::ENCODINGS, true)) {
+            throw new DomainException("pull_spec.{$field}body_encoding must be json, form or query");
+        }
+
+        $deposits = null;
+        if (!$depositList && isset($raw['deposits']) && $raw['deposits'] !== []) {
+            if (!is_array($raw['deposits'])) {
+                throw new DomainException('pull_spec.deposits must be an object');
+            }
+            $deposits = $this->validated($raw['deposits'], true);
         }
 
         $headers = [];
@@ -70,9 +104,13 @@ final class PullSpecParser
             $id,
             $status,
             $updated,
-            $this->statusMap($raw['status_map'] ?? null),
+            $depositList ? [] : $this->statusMap($raw['status_map'] ?? null),
             $this->alsoApprovedWhen($raw['also_approved_when'] ?? null),
             $this->pagination($raw),
+            $dateFormat,
+            $bodyEncoding,
+            $deposits,
+            $depositList,
         );
     }
 
@@ -82,6 +120,14 @@ final class PullSpecParser
      * @param array<string, mixed> $raw
      */
     public function hydrate(array $raw): PullSpec
+    {
+        return $this->stored($raw, false);
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     */
+    private function stored(array $raw, bool $depositList): PullSpec
     {
         $headers = [];
         if (is_array($raw['headers'] ?? null)) {
@@ -100,11 +146,15 @@ final class PullSpecParser
             (int) $raw['lookback_days'],
             (string) $raw['items'],
             (string) $raw['id'],
-            (string) $raw['status'],
+            (string) ($raw['status'] ?? ''),
             isset($raw['updated']) && $raw['updated'] !== '' ? (string) $raw['updated'] : null,
             is_array($raw['status_map'] ?? null) ? $raw['status_map'] : [],
             is_array($raw['also_approved_when'] ?? null) ? $raw['also_approved_when'] : null,
             $this->storedPagination($raw),
+            isset($raw['date_format']) && $raw['date_format'] !== '' ? (string) $raw['date_format'] : null,
+            (string) ($raw['body_encoding'] ?? PullSpec::ENCODING_JSON),
+            !$depositList && is_array($raw['deposits'] ?? null) ? $this->stored($raw['deposits'], true) : null,
+            $depositList,
         );
     }
 
@@ -147,13 +197,17 @@ final class PullSpecParser
             return null;
         }
 
-        $rawStatus = trim((string) $this->scalar($this->lookup($row, $spec->status)));
+        $rawStatus = $spec->status === '' ? '' : trim((string) $this->scalar($this->lookup($row, $spec->status)));
         $updated = $spec->updated === null
             ? null
             : $this->scalar($this->lookup($row, $spec->updated));
         $updatedAt = $updated === null || $updated === '' ? null : $updated;
 
-        if ($this->alsoApproved($row, $spec)) {
+        if ($spec->depositList && !$this->alsoApproved($row, $spec, true)) {
+            return null;
+        }
+
+        if ($spec->depositList || $this->alsoApproved($row, $spec)) {
             return new PullItem(
                 $publicId,
                 $rawStatus,
@@ -180,6 +234,9 @@ final class PullSpecParser
         }
 
         $mapped = $overridden ? $spec->statusMap[$rawStatus] : $this->saleStatuses->map($rawStatus);
+        if ($mapped !== null && $mapped['status'] === 'approved' && $spec->decidesDepositBySignal()) {
+            $mapped = null;
+        }
 
         if ($mapped === null) {
             return new PullItem(
@@ -211,16 +268,32 @@ final class PullSpecParser
     /**
      * @param array<string, mixed> $row
      */
-    private function alsoApproved(array $row, PullSpec $spec): bool
+    private function alsoApproved(array $row, PullSpec $spec, bool $whenUnset = false): bool
     {
         if ($spec->alsoApprovedWhen === null) {
-            return false;
+            return $whenUnset;
         }
 
         $actual = $this->lookup($row, $spec->alsoApprovedWhen['path']);
-        $expected = $spec->alsoApprovedWhen['eq'];
+        if (($spec->alsoApprovedWhen['not_empty'] ?? false) === true) {
+            return !$this->isEmptyValue($actual);
+        }
 
-        return $this->equals($actual, $expected);
+        return $this->equals($actual, $spec->alsoApprovedWhen['eq'] ?? true);
+    }
+
+    private function isEmptyValue(mixed $value): bool
+    {
+        if ($value === null || $value === false || $value === [] || $value === 0 || $value === 0.0) {
+            return true;
+        }
+        if (!is_scalar($value)) {
+            return false;
+        }
+
+        $text = strtolower(trim((string) $value));
+
+        return in_array($text, ['', '0', 'null', 'false', 'no'], true) || str_starts_with($text, '0000-00-00');
     }
 
     private function equals(mixed $actual, mixed $expected): bool
@@ -250,6 +323,10 @@ final class PullSpecParser
 
     private function lookup(mixed $node, string $path): mixed
     {
+        if ($path === '') {
+            return $node;
+        }
+
         $current = $node;
         foreach (explode('.', $path) as $segment) {
             if (!is_array($current) || !array_key_exists($segment, $current)) {
@@ -330,7 +407,7 @@ final class PullSpecParser
     }
 
     /**
-     * @return array{path: string, eq: mixed}|null
+     * @return array{path: string, eq?: mixed, not_empty?: true}|null
      */
     private function alsoApprovedWhen(mixed $raw): ?array
     {
@@ -338,13 +415,15 @@ final class PullSpecParser
             return null;
         }
         if (!is_array($raw) || !isset($raw['path'])) {
-            throw new DomainException('pull_spec.also_approved_when needs path and eq');
+            throw new DomainException('pull_spec.also_approved_when needs path and eq or not_empty');
         }
 
-        return [
-            'path' => $this->dottedPath($raw['path'], 'also_approved_when.path'),
-            'eq' => $raw['eq'] ?? true,
-        ];
+        $path = $this->dottedPath($raw['path'], 'also_approved_when.path');
+        if (($raw['not_empty'] ?? false) === true) {
+            return ['path' => $path, 'not_empty' => true];
+        }
+
+        return ['path' => $path, 'eq' => $raw['eq'] ?? true];
     }
 
     /**
@@ -456,7 +535,7 @@ final class PullSpecParser
     }
 
     /**
-     * @return array{start: int, param: string, in: string}|null
+     * @return array{start: int, param: string, in: string, step?: int}|null
      */
     private function pageBlock(mixed $raw): ?array
     {
@@ -472,11 +551,16 @@ final class PullSpecParser
             throw new DomainException('pull_spec.pagination.page.in must be body or query');
         }
 
-        return [
+        $page = [
             'start' => max(0, (int) ($raw['start'] ?? 1)),
             'param' => (string) ($raw['param'] ?? 'page'),
             'in' => $in,
         ];
+        if (isset($raw['step']) && (int) $raw['step'] > 1) {
+            $page['step'] = (int) $raw['step'];
+        }
+
+        return $page;
     }
 
     /**

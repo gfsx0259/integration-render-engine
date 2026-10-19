@@ -129,4 +129,84 @@ final class PullRequestFactoryTest extends TestCase
         self::assertSame(0, $request->body['page'] ?? null);
         self::assertSame('2026-06-25 14:57:55', $request->body['from'] ?? null);
     }
+
+    public function testFormBodyIsSentAsFormFields(): void
+    {
+        $spec = (new PullSpecParser())->hydrateAndValidate([
+            'method' => 'POST',
+            'path' => '{{static.API_URL}}?act=get_depositors',
+            'body_encoding' => 'form',
+            'body' => ['ApiKey' => '{{static.API_KEY}}', 'DateFrom' => '{{poll.from}}'],
+            'items' => 'ret_message.deposits',
+            'id' => 'leadid',
+            'status' => 'status',
+        ]);
+        self::assertNotNull($spec);
+
+        $request = (new PullRequestFactory())->build(
+            'https://push.example.com/repost.php',
+            $spec,
+            ['API_URL' => 'https://tracker.example.com/repost.php', 'API_KEY' => 'k1'],
+            ['from' => '2026-10-05 05:10:49', 'to' => '2026-10-19 05:10:49', 'page' => '1'],
+        );
+
+        self::assertSame('https://tracker.example.com/repost.php?act=get_depositors', $request->url);
+        self::assertSame(
+            ['form_params' => ['ApiKey' => 'k1', 'DateFrom' => '2026-10-05 05:10:49']],
+            $request->bodyOptions(),
+        );
+    }
+
+    public function testGetMayCarryAJsonBody(): void
+    {
+        $spec = (new PullSpecParser())->hydrateAndValidate([
+            'method' => 'GET',
+            'path' => '{{static.API_URL}}/api/web-master/leads',
+            'body' => ['date_start' => '{{poll.from}}', 'is_action' => '1'],
+            'items' => 'data.data',
+            'id' => 'id',
+            'status' => 'status',
+        ]);
+        self::assertNotNull($spec);
+
+        $request = (new PullRequestFactory())->build(
+            'https://crm.example',
+            $spec,
+            ['API_URL' => 'https://crm.example'],
+            ['from' => '2026-10-05', 'to' => '2026-10-20', 'page' => '1'],
+        );
+
+        self::assertSame('GET', $request->method);
+        self::assertSame(['json' => ['date_start' => '2026-10-05', 'is_action' => '1']], $request->bodyOptions());
+    }
+
+    public function testQueryEncodingMovesBodyIntoTheUrlAndStepsTheOffset(): void
+    {
+        $spec = (new PullSpecParser())->hydrateAndValidate([
+            'method' => 'GET',
+            'path' => '{{static.API_URL}}/api/system/v1/leads/search',
+            'body_encoding' => 'query',
+            'body' => ['count' => '1000', 'ftdDateFrom' => '{{poll.from}}'],
+            'items' => 'items',
+            'id' => 'leadId',
+            'status' => 'status',
+            'pagination' => ['page' => ['start' => 0, 'param' => 'skip', 'in' => 'query', 'step' => 1000]],
+        ]);
+        self::assertNotNull($spec);
+
+        $request = (new PullRequestFactory())->build(
+            'https://crm.example',
+            $spec,
+            ['API_URL' => 'https://crm.example'],
+            ['from' => '2026-10-05T05:10:49', 'to' => '2026-10-19T05:10:49', 'page' => '1000'],
+        );
+
+        self::assertSame(
+            'https://crm.example/api/system/v1/leads/search?skip=1000&count=1000&ftdDateFrom=2026-10-05T05%3A10%3A49',
+            $request->url,
+        );
+        self::assertNull($request->body);
+        self::assertSame([], $request->bodyOptions());
+        self::assertSame(1000, $spec->pageStep());
+    }
 }

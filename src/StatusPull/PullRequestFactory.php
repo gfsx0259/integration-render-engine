@@ -42,11 +42,23 @@ final readonly class PullRequestFactory
             $path = $this->appendQuery($path, [$spec->pageParam() => $poll['page']]);
         }
 
+        if ($spec->bodyEncoding === PullSpec::ENCODING_QUERY) {
+            if (is_array($body) && $body !== []) {
+                $path = $this->appendQuery($path, $body);
+            }
+            $body = null;
+        } elseif ($spec->method === PullSpec::METHOD_POST) {
+            $body = is_array($body) ? $body : [];
+        } elseif (!is_array($body)) {
+            $body = null;
+        }
+
         return new PullRequest(
             $spec->method,
             $this->joinUrl($connectionUrl, $path),
             $headers,
-            $spec->method === PullSpec::METHOD_POST ? (is_array($body) ? $body : []) : null,
+            $body,
+            $spec->bodyEncoding,
         );
     }
 
@@ -91,7 +103,7 @@ final readonly class PullRequestFactory
     }
 
     /**
-     * @param array<string, string> $query
+     * @param array<string, mixed> $query
      */
     private function appendQuery(string $path, array $query): string
     {
