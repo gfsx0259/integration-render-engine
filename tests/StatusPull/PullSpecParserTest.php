@@ -306,8 +306,14 @@ final class PullSpecParserTest extends TestCase
         self::assertSame('form', $stored['body_encoding']);
         self::assertSame('Y-m-d H:i:s', $stored['date_format']);
         self::assertSame(1000, $stored['pagination']['page']['step']);
-        self::assertArrayNotHasKey('status_map', $stored['deposits']);
-        self::assertArrayNotHasKey('status', $stored['deposits']);
+        self::assertSame(
+            [
+                'path' => '{{static.API_URL}}?act=get_depositors',
+                'lookback_days' => 45,
+                'items' => 'ret_message.deposits',
+            ],
+            $stored['deposits'],
+        );
 
         $restored = $this->parser->hydrate($stored);
         self::assertSame(PullSpec::ENCODING_FORM, $restored->bodyEncoding);
@@ -316,6 +322,7 @@ final class PullSpecParserTest extends TestCase
         self::assertTrue($restored->deposits->depositList);
         self::assertSame(45, $restored->deposits->lookbackDays);
         self::assertSame('ret_message.deposits', $restored->deposits->items);
+        self::assertSame('form', $restored->deposits->bodyEncoding);
         self::assertSame($stored, $restored->toArray());
     }
 
@@ -391,19 +398,91 @@ final class PullSpecParserTest extends TestCase
         self::assertSame('2026-10-19', $this->spec($base)->formatPollDate($at));
     }
 
-    public function testDepositListNeedsAnId(): void
+    public function testDepositOverlayInheritsIdHeadersAndPagination(): void
     {
-        $this->expectException(\DomainException::class);
-        $this->expectExceptionMessage('pull_spec.deposits.id');
+        $spec = $this->spec([
+            'method' => 'GET',
+            'path' => '{{static.API_URL}}/api/affiliate/leads?from={{poll.from}}&to={{poll.to}}&limit=200',
+            'items' => 'data',
+            'id' => 'lead_id',
+            'status' => 'sale_status',
+            'headers' => ['X-API-Key' => '{{static.API_TOKEN}}'],
+            'also_approved_when' => ['path' => 'ftd_date', 'not_empty' => true],
+            'pagination' => ['page' => ['start' => 0, 'param' => 'offset', 'in' => 'query', 'step' => 200]],
+            'date_format' => 'Y-m-d',
+            'deposits' => [
+                'path' => '{{static.API_URL}}/api/affiliate/leads?from={{poll.from}}&to={{poll.to}}&limit=200&filter=ftd',
+            ],
+        ]);
 
-        $this->spec([
+        self::assertNotNull($spec->deposits);
+        self::assertSame('lead_id', $spec->deposits->id);
+        self::assertSame('data', $spec->deposits->items);
+        self::assertSame(['X-API-Key' => '{{static.API_TOKEN}}'], $spec->deposits->headers);
+        self::assertSame(['path' => 'ftd_date', 'not_empty' => true], $spec->deposits->alsoApprovedWhen);
+        self::assertSame(0, $spec->deposits->pageStart());
+        self::assertSame(PullSpec::DEFAULT_DEPOSIT_LOOKBACK_DAYS, $spec->deposits->lookbackDays);
+        self::assertSame(
+            ['path' => '{{static.API_URL}}/api/affiliate/leads?from={{poll.from}}&to={{poll.to}}&limit=200&filter=ftd'],
+            $spec->toArray()['deposits'],
+        );
+    }
+
+    public function testDepositOverlayKeepsDistinctHeaders(): void
+    {
+        $spec = $this->spec([
+            'method' => 'POST',
+            'path' => '{{static.API_URL}}/api/pull/customers',
+            'items' => 'data',
+            'id' => 'tracking.MPC_1',
+            'status' => 'customerData.call_status',
+            'headers' => ['x-api-key' => '{{static.API_TOKEN}}'],
+            'deposits' => [
+                'path' => '{{static.API_URL}}/api/pull/customers',
+                'headers' => [
+                    'x-api-key' => '{{static.API_CONVERSION_KEY}}',
+                    'x-trackbox-username' => '{{static.API_USER}}',
+                ],
+                'body' => ['from' => '{{poll.from}}', 'to' => '{{poll.to}}', 'type' => '4'],
+            ],
+        ]);
+
+        self::assertNotNull($spec->deposits);
+        self::assertSame(
+            [
+                'x-api-key' => '{{static.API_CONVERSION_KEY}}',
+                'x-trackbox-username' => '{{static.API_USER}}',
+            ],
+            $spec->deposits->headers,
+        );
+        self::assertSame(
+            [
+                'headers' => [
+                    'x-api-key' => '{{static.API_CONVERSION_KEY}}',
+                    'x-trackbox-username' => '{{static.API_USER}}',
+                ],
+                'body' => ['from' => '{{poll.from}}', 'to' => '{{poll.to}}', 'type' => '4'],
+            ],
+            $spec->toArray()['deposits'],
+        );
+    }
+
+    public function testEmptyDepositOverlayIsSameRequestWithThirtyDayLookback(): void
+    {
+        $spec = $this->spec([
             'method' => 'GET',
             'path' => '/leads',
             'items' => 'data',
             'id' => 'id',
             'status' => 'status',
-            'deposits' => ['method' => 'GET', 'path' => '/ftds', 'items' => 'data'],
+            'also_approved_when' => ['path' => 'isDeposited', 'eq' => true],
+            'deposits' => [],
         ]);
+
+        self::assertNotNull($spec->deposits);
+        self::assertSame('/leads', $spec->deposits->path);
+        self::assertSame(30, $spec->deposits->lookbackDays);
+        self::assertSame(['lookback_days' => 30], $spec->toArray()['deposits']);
     }
 
     public function testUnknownBodyEncodingIsRejected(): void
@@ -448,7 +527,8 @@ final class PullSpecParserTest extends TestCase
         self::assertCount(1, $deposits);
         self::assertSame('a2', $deposits[0]->publicId);
         self::assertSame('approved', $deposits[0]->status);
-        self::assertSame(['path' => 'isDeposited', 'eq' => true], $spec->toArray()['deposits']['also_approved_when']);
+        self::assertSame(['path' => 'isDeposited', 'eq' => true], $spec->deposits->alsoApprovedWhen);
+        self::assertSame(['lookback_days' => 30], $spec->toArray()['deposits']);
     }
 
     /**

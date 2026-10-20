@@ -90,7 +90,68 @@ final readonly class PullSpec
             $out['body_encoding'] = $this->bodyEncoding;
         }
         if ($this->deposits !== null) {
-            $out['deposits'] = $this->deposits->toArray();
+            $out['deposits'] = $this->deposits->toOverlayArray($this);
+        }
+
+        return $out;
+    }
+
+    /**
+     * Overlay vs the parent: only keys that are not inherited.
+     * lookback_days defaults to 30, not the parent's status window.
+     *
+     * @return array<string, mixed>
+     */
+    public function toOverlayArray(self $parent): array
+    {
+        $expanded = $this->toArray();
+        unset($expanded['deposits']);
+        $inherited = $parent->inheritedDepositDefaults();
+
+        $overlay = [];
+        foreach ($expanded as $key => $value) {
+            if (($inherited[$key] ?? null) === $value) {
+                continue;
+            }
+            $overlay[$key] = $value;
+        }
+
+        if ($overlay === []) {
+            return ['lookback_days' => self::DEFAULT_DEPOSIT_LOOKBACK_DAYS];
+        }
+
+        return $overlay;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function inheritedDepositDefaults(): array
+    {
+        $out = [
+            'method' => $this->method,
+            'path' => $this->path,
+            'lookback_days' => self::DEFAULT_DEPOSIT_LOOKBACK_DAYS,
+            'items' => $this->items,
+            'id' => $this->id,
+        ];
+        if ($this->headers !== []) {
+            $out['headers'] = $this->headers;
+        }
+        if ($this->body !== null) {
+            $out['body'] = $this->body;
+        }
+        if ($this->alsoApprovedWhen !== null) {
+            $out['also_approved_when'] = $this->alsoApprovedWhen;
+        }
+        if ($this->pagination !== null) {
+            $out['pagination'] = $this->pagination;
+        }
+        if ($this->dateFormat !== null) {
+            $out['date_format'] = $this->dateFormat;
+        }
+        if ($this->bodyEncoding !== self::ENCODING_JSON) {
+            $out['body_encoding'] = $this->bodyEncoding;
         }
 
         return $out;

@@ -73,11 +73,11 @@ final class PullSpecParser
         }
 
         $deposits = null;
-        if (!$depositList && isset($raw['deposits']) && $raw['deposits'] !== []) {
+        if (!$depositList && array_key_exists('deposits', $raw) && $raw['deposits'] !== null) {
             if (!is_array($raw['deposits'])) {
                 throw new DomainException('pull_spec.deposits must be an object');
             }
-            $deposits = $this->validated($raw['deposits'], true);
+            $deposits = $this->validated($this->expandDeposits($raw, $raw['deposits']), true);
         }
 
         $headers = [];
@@ -153,9 +153,48 @@ final class PullSpecParser
             $this->storedPagination($raw),
             isset($raw['date_format']) && $raw['date_format'] !== '' ? (string) $raw['date_format'] : null,
             (string) ($raw['body_encoding'] ?? PullSpec::ENCODING_JSON),
-            !$depositList && is_array($raw['deposits'] ?? null) ? $this->stored($raw['deposits'], true) : null,
+            !$depositList && is_array($raw['deposits'] ?? null)
+                ? $this->stored($this->expandDeposits($raw, $raw['deposits']), true)
+                : null,
             $depositList,
         );
+    }
+
+    /**
+     * deposits is an overlay: inherit HTTP/parse fields from the status pull.
+     *
+     * @param array<string, mixed> $parent
+     * @param array<string, mixed> $overlay
+     * @return array<string, mixed>
+     */
+    private function expandDeposits(array $parent, array $overlay): array
+    {
+        $inherited = [];
+        foreach ([
+            'method',
+            'path',
+            'headers',
+            'body',
+            'items',
+            'id',
+            'pagination',
+            'page',
+            'date_format',
+            'body_encoding',
+            'also_approved_when',
+        ] as $key) {
+            if (array_key_exists($key, $parent) && $parent[$key] !== null && $parent[$key] !== []) {
+                $inherited[$key] = $parent[$key];
+            }
+        }
+
+        $merged = array_replace($inherited, $overlay);
+        unset($merged['deposits']);
+        if (!array_key_exists('lookback_days', $overlay)) {
+            $merged['lookback_days'] = PullSpec::DEFAULT_DEPOSIT_LOOKBACK_DAYS;
+        }
+
+        return $merged;
     }
 
     /**
