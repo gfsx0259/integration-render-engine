@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Enthusiast\IntegrationRenderEngine\Tests\StatusPull;
 
+use Enthusiast\IntegrationRenderEngine\StatusPull\PullItem;
 use Enthusiast\IntegrationRenderEngine\StatusPull\PullSpec;
 use Enthusiast\IntegrationRenderEngine\StatusPull\PullSpecParser;
 use PHPUnit\Framework\TestCase;
@@ -106,10 +107,16 @@ final class PullSpecParserTest extends TestCase
         ], $spec);
 
         self::assertCount(4, $items);
-        self::assertSame('approved', $items[0]->status);
+        self::assertTrue($items[0]->deposit);
+        self::assertTrue($items[0]->inProgress);
+        self::assertNull($items[0]->status);
         self::assertSame('public-ftd', $items[0]->publicId);
+        self::assertSame('approved', $this->published($items[0], $spec)->status);
+        self::assertFalse($items[1]->deposit);
         self::assertSame('rejected', $items[1]->status);
         self::assertSame('not_interested', $items[1]->reason);
+        self::assertSame('rejected', $this->published($items[1], $spec)->status);
+        self::assertFalse($items[2]->deposit);
         self::assertTrue($items[2]->inProgress);
         self::assertTrue($items[3]->unknown);
         self::assertNull($items[3]->status);
@@ -275,8 +282,12 @@ final class PullSpecParserTest extends TestCase
 
         self::assertCount(2, $deposits);
         self::assertSame('3652603', $deposits[0]->publicId);
-        self::assertSame('approved', $deposits[0]->status);
-        self::assertSame('approved', $deposits[1]->status);
+        self::assertTrue($deposits[0]->deposit);
+        self::assertTrue($deposits[1]->deposit);
+        self::assertTrue($deposits[0]->inProgress);
+        self::assertTrue($deposits[1]->inProgress);
+        self::assertSame('approved', $this->published($deposits[0], $spec->deposits)->status);
+        self::assertSame('approved', $this->published($deposits[1], $spec->deposits)->status);
     }
 
     public function testDepositSpecSurvivesStorageRoundTrip(): void
@@ -343,10 +354,14 @@ final class PullSpecParserTest extends TestCase
             ['leadId' => 249809, 'ftd' => '2026-10-07 12:39:41', 'status' => 'not interested'],
         ]], $spec);
 
+        self::assertFalse($items[0]->deposit);
+        self::assertFalse($items[1]->deposit);
         self::assertNull($items[0]->status);
         self::assertNull($items[1]->status);
-        self::assertSame('approved', $items[2]->status);
+        self::assertTrue($items[2]->deposit);
+        self::assertSame('rejected', $items[2]->status);
         self::assertSame('not interested', $items[2]->rawStatus);
+        self::assertSame('approved', $this->published($items[2], $spec)->status);
     }
 
     public function testStatusTextDoesNotApproveWhenTheAdapterHasADepositSignal(): void
@@ -367,9 +382,15 @@ final class PullSpecParserTest extends TestCase
             ['id' => 3, 'acq' => 1, 'status' => 'Call back'],
         ]], $spec);
 
-        self::assertTrue($items[0]->inProgress);
-        self::assertTrue($items[1]->inProgress);
-        self::assertSame('approved', $items[2]->status);
+        self::assertFalse($items[0]->deposit);
+        self::assertSame('approved', $items[0]->status);
+        self::assertTrue($this->published($items[0], $spec)->inProgress);
+        self::assertFalse($items[1]->deposit);
+        self::assertSame('approved', $items[1]->status);
+        self::assertTrue($this->published($items[1], $spec)->inProgress);
+        self::assertTrue($items[2]->deposit);
+        self::assertTrue($items[2]->inProgress);
+        self::assertSame('approved', $this->published($items[2], $spec)->status);
     }
 
     public function testStatusTextStillApprovesWithoutADepositSignal(): void
@@ -526,7 +547,9 @@ final class PullSpecParserTest extends TestCase
 
         self::assertCount(1, $deposits);
         self::assertSame('a2', $deposits[0]->publicId);
-        self::assertSame('approved', $deposits[0]->status);
+        self::assertTrue($deposits[0]->deposit);
+        self::assertTrue($deposits[0]->inProgress);
+        self::assertSame('approved', $this->published($deposits[0], $spec->deposits)->status);
         self::assertSame(['path' => 'isDeposited', 'eq' => true], $spec->deposits->alsoApprovedWhen);
         self::assertSame(['lookback_days' => 30], $spec->toArray()['deposits']);
     }
@@ -540,5 +563,10 @@ final class PullSpecParserTest extends TestCase
         self::assertInstanceOf(PullSpec::class, $spec);
 
         return $spec;
+    }
+
+    private function published(PullItem $item, PullSpec $spec): PullItem
+    {
+        return $item->forPublish($spec->decidesDepositBySignal());
     }
 }

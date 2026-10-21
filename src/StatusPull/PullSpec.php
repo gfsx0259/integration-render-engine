@@ -52,7 +52,7 @@ final readonly class PullSpec
     ) {}
 
     /**
-     * Existing labels win. Used after StatusMapLearner so this poll page can be re-parsed.
+     * Existing labels win. Used so later pages of this poll skip already-seen statuses.
      *
      * @param array<string, array{status: string, reason?: string}|null> $learned
      */

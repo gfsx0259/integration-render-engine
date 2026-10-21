@@ -246,18 +246,7 @@ final class PullSpecParser
             return null;
         }
 
-        if ($spec->depositList || $this->alsoApproved($row, $spec)) {
-            return new PullItem(
-                $publicId,
-                $rawStatus,
-                inProgress: false,
-                unknown: false,
-                status: 'approved',
-                reason: null,
-                updatedAt: $updatedAt,
-            );
-        }
-
+        $deposit = $spec->depositList || $this->alsoApproved($row, $spec);
         $overridden = array_key_exists($rawStatus, $spec->statusMap);
 
         if (!$overridden && $this->saleStatuses->isUnknown($rawStatus)) {
@@ -269,14 +258,11 @@ final class PullSpecParser
                 status: null,
                 reason: null,
                 updatedAt: $updatedAt,
+                deposit: $deposit,
             );
         }
 
         $mapped = $overridden ? $spec->statusMap[$rawStatus] : $this->saleStatuses->map($rawStatus);
-        if ($mapped !== null && $mapped['status'] === 'approved' && $spec->decidesDepositBySignal()) {
-            $mapped = null;
-        }
-
         if ($mapped === null) {
             return new PullItem(
                 $publicId,
@@ -286,6 +272,7 @@ final class PullSpecParser
                 status: null,
                 reason: null,
                 updatedAt: $updatedAt,
+                deposit: $deposit,
             );
         }
 
@@ -301,6 +288,7 @@ final class PullSpecParser
             status: $mapped['status'],
             reason: $reason,
             updatedAt: $updatedAt,
+            deposit: $deposit,
         );
     }
 

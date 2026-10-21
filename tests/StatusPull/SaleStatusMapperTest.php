@@ -109,9 +109,13 @@ final class SaleStatusMapperTest extends TestCase
         ]], $spec);
 
         self::assertTrue($items[0]->inProgress);
+        self::assertFalse($items[0]->deposit);
         self::assertSame(['rejected', 'not_interested'], [$items[1]->status, $items[1]->reason]);
         self::assertSame(['rejected', 'not_interested'], [$items[2]->status, $items[2]->reason]);
-        self::assertSame('approved', $items[3]->status);
+        self::assertFalse($items[2]->deposit);
+        self::assertTrue($items[3]->deposit);
+        self::assertSame(['rejected', 'not_interested'], [$items[3]->status, $items[3]->reason]);
+        self::assertSame('approved', $items[3]->forPublish($spec->decidesDepositBySignal())->status);
         self::assertTrue($items[4]->unknown);
     }
 
