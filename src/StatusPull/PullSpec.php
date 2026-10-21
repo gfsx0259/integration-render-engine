@@ -51,6 +51,33 @@ final readonly class PullSpec
         public bool $depositList = false,
     ) {}
 
+    /**
+     * Existing labels win. Used so later pages of this poll skip already-seen statuses.
+     *
+     * @param array<string, array{status: string, reason?: string}|null> $learned
+     */
+    public function withNewStatusMap(array $learned): self
+    {
+        return new self(
+            $this->method,
+            $this->path,
+            $this->headers,
+            $this->body,
+            $this->lookbackDays,
+            $this->items,
+            $this->id,
+            $this->status,
+            $this->updated,
+            $this->statusMap + $learned,
+            $this->alsoApprovedWhen,
+            $this->pagination,
+            $this->dateFormat,
+            $this->bodyEncoding,
+            $this->deposits,
+            $this->depositList,
+        );
+    }
+
     public function toArray(): array
     {
         $out = [
